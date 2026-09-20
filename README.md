@@ -17,3 +17,8 @@ To run this project locally, please follow these steps to set up a clean Python 
 ```bash
 git clone https://github.com/Samanvitha006/antellay-aegis-telemetry.git
 cd antellay-aegis-telemetry
+# 2. Install required dependencies
+pip install -r requirements.txt
+
+# 3. Launch the Streamlit dashboard
+streamlit run app.py
