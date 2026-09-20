@@ -13,8 +13,7 @@ This repository contains the prototype for the ANTELLAY Space technical assignme
 ## ⚙️ Local Setup & Execution Instructions
 
 To run this project locally, please follow these steps to set up a clean Python environment. Python 3.9+ is recommended.
-
 **1. Clone the repository**
 ```bash
-git clone <YOUR_GITHUB_REPO_URL>
-cd <YOUR_FOLDER_NAME>
+git clone https://github.com/Samanvitha006/antellay-aegis-telemetry.git
+cd antellay-aegis-telemetry
