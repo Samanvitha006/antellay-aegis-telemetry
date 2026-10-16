@@ -2,8 +2,7 @@
 
 This repository contains the prototype for the ANTELLAY Space technical assignment. It features a complete machine learning pipeline (Isolation Forest) for multivariate telemetry anomaly detection and an interactive Streamlit dashboard for operators.
 
-## 🎥 Live Demonstration
-**[Insert the link to your 2-minute Loom/Screen Recording video here]**
+https://antellay-aegis-telemetry-kzfj2q5wv2jnstxkvojyv7.streamlit.app/
 
 ## 📁 Project Structure
 * `1_EDA_and_Model_Training.ipynb`: Jupyter notebook containing data generation, preprocessing, model training, and root-cause analysis.
