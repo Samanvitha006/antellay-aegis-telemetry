@@ -197,27 +197,25 @@ st.markdown(
 )
 
 # ==========================================
-# 6. LIVE CHANNEL METRICS & EVALUATION SCORECARD
+# 6. CLEANED METRICS & EVALUATION DISPLAY
 # ==========================================
-st.markdown("#### 📊 Channel Telemetry State & Held-Out Test Set Evaluation")
-k1, k2, k3, k4, k5, k6 = st.columns(6)
-k1.metric("Observed Value (Scaled)", f"{latest_row[primary_col]:.4f}")
-k2.metric("Rolling Baseline (Scaled)", f"{latest_row['baseline_value']:.4f}")
-k3.metric("Latest Anomaly Score", f"{latest_row['Anomaly_Score']:.4f}")
-k4.metric("Test Precision", f"{eval_metrics['precision']:.3f}")
-k5.metric("Test Recall", f"{eval_metrics['recall']:.3f}")
-k6.metric("Test F1 Score", f"{eval_metrics['f1']:.3f}")
+st.markdown("#### 📊 Live Channel Telemetry State")
+c1, c2, c3 = st.columns(3)
+c1.metric("Observed Value (Scaled)", f"{latest_row[primary_col]:.4f}")
+c2.metric("Rolling Baseline (Scaled)", f"{latest_row['baseline_value']:.4f}")
+c3.metric("Latest Anomaly Score", f"{latest_row['Anomaly_Score']:.4f}")
 
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("False Positive Rate (FPR)", f"{eval_metrics['fpr']:.4f}")
-m2.metric("False Positives / True Positives", f"{eval_metrics['fp']} FP / {eval_metrics['tp']} TP")
-m3.metric(
-    "Labelled Sequences Caught",
-    f"{eval_metrics['detected_sequences']} / {eval_metrics['total_sequences']}",
-)
-m4.metric("Mean Detection Delay (Steps)", f"{eval_metrics['mean_detection_delay']}")
+st.markdown("#### 🎯 Held-Out Test Set Performance Scorecard")
+e1, e2, e3, e4 = st.columns(4)
+e1.metric("Test Precision", f"{eval_metrics['precision']:.3f}")
+e2.metric("Test Recall", f"{eval_metrics['recall']:.3f}")
+e3.metric("Test F1 Score", f"{eval_metrics['f1']:.3f}")
+e4.metric("False Positive Rate (FPR)", f"{eval_metrics['fpr']:.4f}")
 
-st.divider()
+f1, f2, f3 = st.columns(3)
+f1.metric("False Pos. / True Pos.", f"{eval_metrics['fp']} FP / {eval_metrics['tp']} TP")
+f2.metric("Labelled Sequences Caught", f"{eval_metrics['detected_sequences']} / {eval_metrics['total_sequences']}")
+f3.metric("Mean Detection Delay", f"{eval_metrics['mean_detection_delay']} steps")
 
 # ==========================================
 # 7. INTERACTIVE TELEMETRY & INTERVAL PLOT
