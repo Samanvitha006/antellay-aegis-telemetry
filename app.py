@@ -196,26 +196,28 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
 # ==========================================
-# 6. CLEANED METRICS & EVALUATION DISPLAY
+# 6. CLEAN EXECUTIVE METRICS & EVALUATION
 # ==========================================
 st.markdown("#### 📊 Live Channel Telemetry State")
-c1, c2, c3 = st.columns(3)
-c1.metric("Observed Value (Scaled)", f"{latest_row[primary_col]:.4f}")
-c2.metric("Rolling Baseline (Scaled)", f"{latest_row['baseline_value']:.4f}")
-c3.metric("Latest Anomaly Score", f"{latest_row['Anomaly_Score']:.4f}")
+col1, col2, col3 = st.columns(3)
+col1.metric("Observed Value", f"{latest_row[primary_col]:.4f}")
+col2.metric("Rolling Baseline", f"{latest_row['baseline_value']:.4f}")
+col3.metric("Anomaly Score", f"{latest_row['Anomaly_Score']:.4f}")
 
-st.markdown("#### 🎯 Held-Out Test Set Performance Scorecard")
-e1, e2, e3, e4 = st.columns(4)
-e1.metric("Test Precision", f"{eval_metrics['precision']:.3f}")
-e2.metric("Test Recall", f"{eval_metrics['recall']:.3f}")
-e3.metric("Test F1 Score", f"{eval_metrics['f1']:.3f}")
-e4.metric("False Positive Rate (FPR)", f"{eval_metrics['fpr']:.4f}")
+st.markdown("#### 🎯 Model Evaluation Scorecard (Held-Out Test Split)")
 
-f1, f2, f3 = st.columns(3)
-f1.metric("False Pos. / True Pos.", f"{eval_metrics['fp']} FP / {eval_metrics['tp']} TP")
-f2.metric("Labelled Sequences Caught", f"{eval_metrics['detected_sequences']} / {eval_metrics['total_sequences']}")
-f3.metric("Mean Detection Delay", f"{eval_metrics['mean_detection_delay']} steps")
+# Use clean columns with custom formatting for the performance scorecard
+m1, m2, m3, m4, m5, m6 = st.columns(6)
+m1.metric("Precision", f"{eval_metrics['precision']:.3f}")
+m2.metric("Recall", f"{eval_metrics['recall']:.3f}")
+m3.metric("F1 Score", f"{eval_metrics['f1']:.3f}")
+m4.metric("FPR", f"{eval_metrics['fpr']:.3f}")
+m5.metric("Sequences Caught", f"{eval_metrics['detected_sequences']}/{eval_metrics['total_sequences']}")
+m6.metric("Detection Delay", f"{eval_metrics['mean_detection_delay']}")
+
+st.divider()
 
 # ==========================================
 # 7. INTERACTIVE TELEMETRY & INTERVAL PLOT
