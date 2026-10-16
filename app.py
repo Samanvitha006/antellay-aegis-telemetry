@@ -1,9 +1,15 @@
+import time
 import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler
 import plotly.graph_objects as go
+
+from telemanom_engine import (
+    BENCHMARK_CHANNELS,
+    load_channel_data,
+    run_detectors,
+    evaluate_predictions,
+)
 
 # ==========================================
 # 1. PAGE CONFIGURATION & CORPORATE CSS
@@ -12,27 +18,21 @@ st.set_page_config(
     page_title="Antellay Space | AEGIS Platform",
     page_icon="🛰️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# Professional Corporate Dark Theme CSS
 st.markdown("""
     <style>
-    /* Main background */
     .stApp {
         background-color: #0B0F19;
         color: #E2E8F0;
         font-family: 'Inter', 'Segoe UI', sans-serif;
     }
-
-    /* Headers */
     h1, h2, h3 {
         color: #FFFFFF !important;
         font-weight: 600;
         letter-spacing: 0.5px;
     }
-
-    /* Branding */
     .company-logo {
         font-size: 1.1em;
         font-weight: 700;
@@ -48,205 +48,288 @@ st.markdown("""
         margin-bottom: -10px;
     }
     .product-subtitle {
-        font-size: 1.2em;
+        font-size: 1.15em;
         font-weight: 400;
         color: #94A3B8;
-        margin-bottom: 30px;
+        margin-bottom: 20px;
     }
-
-    /* Sidebar styling */
+    .source-badge {
+        background-color: #1E293B;
+        border-left: 4px solid #38BDF8;
+        padding: 10px 15px;
+        border-radius: 4px;
+        font-size: 0.9em;
+        color: #CBD5E1;
+        margin-bottom: 20px;
+    }
     [data-testid="stSidebar"] {
         background-color: #111827;
         border-right: 1px solid #1E293B;
     }
-
-    /* Divider */
     hr {
         border-color: #1E293B;
     }
     </style>
 """, unsafe_allow_html=True)
 
+# ==========================================
+# 2. SESSION STATE INITIALIZATION
+# ==========================================
+if "current_index" not in st.session_state:
+    st.session_state.current_index = 250
+if "stream_active" not in st.session_state:
+    st.session_state.stream_active = False
 
 # ==========================================
-# 2. CACHED DATA & AI PIPELINE
+# 3. SIDEBAR CONTROLS
 # ==========================================
-@st.cache_data
-def run_telemetry_pipeline():
-    np.random.seed(42)
-    n_minutes = 2880
-    timestamps = pd.date_range(start="2026-09-19 00:00:00", periods=n_minutes, freq="min")
-    minute_of_orbit = np.array([i % 90 for i in range(n_minutes)])
-    is_sunlit = minute_of_orbit < 60
+with st.sidebar:
+    st.markdown("### 🎛️ Telemetry Source & Model")
+    selected_channel = st.selectbox(
+        "Select Telemanom Benchmark Channel",
+        BENCHMARK_CHANNELS,
+        index=0,
+        help="Public channels from NASA SMAP satellite & MSL Curiosity rover.",
+    )
+    detector_type = st.selectbox(
+        "Select Detector Model",
+        [
+            "Isolation Forest (Unsupervised ML)",
+            "Rolling Robust Baseline (Statistical)",
+        ],
+        index=0,
+    )
+    threshold_pct = st.slider(
+        "Training Tail Threshold Percentile (%)",
+        min_value=0.5,
+        max_value=10.0,
+        value=1.0,
+        step=0.5,
+        help="Calibrated strictly on held-out training data to prevent test leakage.",
+    )
 
-    # Base nominal data
-    solar = np.where(is_sunlit, 180 + 10 * np.sin(minute_of_orbit / 10) + np.random.normal(0, 2, n_minutes), 0.0)
-    power = 130 + np.random.normal(0, 3, n_minutes)
-    curr = np.where(is_sunlit, (solar - power) / 28.0, 0.0) - np.where(~is_sunlit, power / 28.0,
-                                                                       0.0) + np.random.normal(0, 0.2, n_minutes)
-    volt = 28.0 + 2.5 * np.sin(minute_of_orbit / 15) + np.random.normal(0, 0.1, n_minutes)
-    temp = np.where(is_sunlit, 22.0 + 4.0 * np.sin(minute_of_orbit / 20),
-                    12.0 - 2.0 * np.cos(minute_of_orbit / 15)) + np.random.normal(0, 0.3, n_minutes)
+    st.divider()
+    st.markdown("### 📡 Display Mode")
+    view_mode = st.radio(
+        "Telemetry Inspection Mode",
+        ["Full Held-Out Test Split", "Simulated Playback Window"],
+        index=0,
+    )
 
-    df = pd.DataFrame({
-        "Timestamp": timestamps, "Temperature_C": temp, "Battery_Voltage_V": volt,
-        "Battery_Current_A": curr, "Power_Consumption_W": power, "Solar_Panel_Output_W": solar
-    })
+    if view_mode == "Simulated Playback Window":
+        colA, colB = st.columns(2)
+        if colA.button("▶️ Play", use_container_width=True):
+            st.session_state.stream_active = True
+            st.rerun()
+        if colB.button("⏸️ Pause", use_container_width=True):
+            st.session_state.stream_active = False
+            st.rerun()
 
-    # Inject anomaly scenario
-    df.loc[2600:2640, "Temperature_C"] += np.linspace(5, 35, 41)
-    df.loc[2600:2640, "Battery_Voltage_V"] -= np.linspace(1, 8, 41)
-    df.loc[2600:2640, "Power_Consumption_W"] += np.linspace(10, 50, 41)
-
-    features = ["Temperature_C", "Battery_Voltage_V", "Battery_Current_A", "Power_Consumption_W",
-                "Solar_Panel_Output_W"]
-
-    train_end, val_end = int(n_minutes * 0.70), int(n_minutes * 0.85)
-    train_df, val_df, test_df = df.iloc[:train_end].copy(), df.iloc[train_end:val_end].copy(), df.iloc[val_end:].copy()
-
-    scaler = StandardScaler()
-    X_train = scaler.fit_transform(train_df[features])
-    X_val = scaler.transform(val_df[features])
-    X_test = scaler.transform(test_df[features])
-
-    model = IsolationForest(n_estimators=150, random_state=42, contamination=0.01).fit(X_train)
-    dynamic_threshold = np.percentile(model.decision_function(X_val), 1.0)
-
-    test_scores = model.decision_function(X_test)
-    test_df['Predicted_Anomaly'] = (test_scores < dynamic_threshold).astype(int)
-    test_df['Anomaly_Score'] = np.round(-test_scores, 3)
-
-    score_p98, score_p90 = np.percentile(test_df['Anomaly_Score'], 98), np.percentile(test_df['Anomaly_Score'], 90)
-    test_df["Severity"] = test_df.apply(lambda r: "Nominal" if r["Predicted_Anomaly"] == 0 else (
-        "High" if r["Anomaly_Score"] > score_p98 else ("Medium" if r["Anomaly_Score"] > score_p90 else "Low")), axis=1)
-
-    means, stds = train_df[features].mean(), train_df[features].std().replace(0, 1e-6)
-
-    def find_culprit(row):
-        return "None" if row["Predicted_Anomaly"] == 0 else np.abs((row[features] - means) / stds).idxmax()
-
-    test_df["Root_Cause_Parameter"] = test_df.apply(find_culprit, axis=1)
-
-    def get_diagnostics(row):
-        if row['Predicted_Anomaly'] == 0: return "Nominal operations.", "Maintain standard mission profile."
-        param = row['Root_Cause_Parameter']
-        if param == "Temperature_C":
-            return "Critical thermal variance detected. High correlation with voltage anomalies.", "SYSTEM ACTION: Isolate primary battery subsystem. Initiate Safe Mode protocol."
-        elif param == "Battery_Voltage_V":
-            return "Severe voltage degradation.", "SYSTEM ACTION: Inspect for unmetered load or parasitic drain."
-        return f"Unexpected deviation in {param}.", "SYSTEM ACTION: Review raw telemetry matrices."
-
-    test_df[["Possible_Interpretation", "System_Recommendation"]] = test_df.apply(get_diagnostics, axis=1,
-                                                                                  result_type="expand")
-    return test_df
-
-
-test_df = run_telemetry_pipeline()
-anomalies_df = test_df[test_df["Predicted_Anomaly"] == 1]
-latest_data = test_df.iloc[-1]
+    st.divider()
+    severity_filter = st.multiselect(
+        "Filter Triage Log by Severity",
+        ["High", "Medium", "Low"],
+        default=["High", "Medium", "Low"],
+    )
+    st.caption("© 2026 Antellay Space Systems. Benchmark Validation Build.")
 
 # ==========================================
-# 3. HEADER & ENTERPRISE BRANDING
+# 4. CACHED DATA LOADING & MODEL EXECUTION
+# ==========================================
+@st.cache_data(show_spinner="Loading NASA Telemanom benchmark channel from Hugging Face...")
+def get_evaluated_channel(chan_id: str, model_name: str, thresh: float):
+    bundle = load_channel_data(chan_id)
+    evaluated_test = run_detectors(
+        bundle["train_df"],
+        bundle["test_df"],
+        bundle["feature_cols"],
+        detector_type=model_name,
+        threshold_pct=thresh,
+    )
+    metrics = evaluate_predictions(evaluated_test, bundle["anomaly_sequences"])
+    return bundle, evaluated_test, metrics
+
+bundle, test_df, eval_metrics = get_evaluated_channel(selected_channel, detector_type, threshold_pct)
+primary_col = "value" if "value" in bundle["feature_cols"] else bundle["feature_cols"][0]
+
+if view_mode == "Simulated Playback Window":
+    if st.session_state.stream_active:
+        if st.session_state.current_index < len(test_df) - 1:
+            st.session_state.current_index += 25
+        else:
+            st.session_state.current_index = 250
+    end_idx = min(len(test_df), st.session_state.current_index)
+    start_idx = max(0, end_idx - 400)
+    display_df = test_df.iloc[start_idx:end_idx]
+else:
+    st.session_state.stream_active = False
+    display_df = test_df
+
+anomalies_df = display_df[display_df["Predicted_Anomaly"] == 1]
+filtered_anomalies = anomalies_df[anomalies_df["Severity"].isin(severity_filter)]
+latest_row = display_df.iloc[-1]
+
+# ==========================================
+# 5. HEADER & DATA PROVENANCE DISCLOSURE
 # ==========================================
 st.markdown("<div class='company-logo'>ANTELLAY SPACE</div>", unsafe_allow_html=True)
 st.markdown("<div class='product-title'>AEGIS</div>", unsafe_allow_html=True)
-st.markdown("<div class='product-subtitle'>AI-Based Satellite Health Monitoring & Anomaly Detection</div>",
-            unsafe_allow_html=True)
+st.markdown(
+    "<div class='product-subtitle'>Spacecraft Telemetry Anomaly Detection — Public Benchmark Validation</div>",
+    unsafe_allow_html=True,
+)
 
-# Sidebar Configuration
-with st.sidebar:
-    st.markdown("### 🎛️ Operations Console")
-    st.divider()
-    selected_sensor = st.selectbox(
-        "Select Telemetry Stream",
-        ["Temperature_C", "Battery_Voltage_V", "Power_Consumption_W", "Solar_Panel_Output_W"],
-        index=0
-    )
-    severity_filter = st.multiselect(
-        "Filter Anomalies by Severity",
-        ["High", "Medium", "Low"],
-        default=["High", "Medium", "Low"]
-    )
-    st.divider()
-    st.caption("© 2026 Antellay Space Systems. All rights reserved.")
+mission_type = (
+    "SMAP Earth-Observation Satellite"
+    if bundle["spacecraft"] == "SMAP"
+    else f"{bundle['spacecraft']} Spacecraft / Curiosity Rover"
+)
 
-filtered_anomalies = anomalies_df[anomalies_df["Severity"].isin(severity_filter)]
+st.markdown(
+    f"<div class='source-badge'>"
+    f"<b>DATA PROVENANCE DISCLOSURE:</b> Displaying <b>PUBLIC BENCHMARK TELEMETRY</b> "
+    f"(Dataset: <code>NASA Telemanom / appleparan</code> | Mission: <b>{mission_type}</b> | "
+    f"Channel: <code>{selected_channel}</code> | Features: <code>{len(bundle['feature_cols'])}</code>). "
+    f"Values are <b>anonymized and scaled (dimensionless)</b> and timestamps are relative index steps. "
+    f"Not a live spacecraft feed; do not interpret as physical °C, V, or W units."
+    f"</div>",
+    unsafe_allow_html=True,
+)
 
-# Status Banner
-if not anomalies_df.empty:
-    st.error(
-        f"⚠️ **ATTENTION REQUIRED:** {len(anomalies_df)} anomalies detected in current telemetry window. Immediate review recommended.")
-else:
-    st.success("✅ **SYSTEM NOMINAL:** All spacecraft subsystems operating within defined parameters.")
+# ==========================================
+# 6. LIVE CHANNEL METRICS & EVALUATION SCORECARD
+# ==========================================
+st.markdown("#### 📊 Channel Telemetry State & Held-Out Test Set Evaluation")
+k1, k2, k3, k4, k5, k6 = st.columns(6)
+k1.metric("Observed Value (Scaled)", f"{latest_row[primary_col]:.4f}")
+k2.metric("Rolling Baseline (Scaled)", f"{latest_row['baseline_value']:.4f}")
+k3.metric("Latest Anomaly Score", f"{latest_row['Anomaly_Score']:.4f}")
+k4.metric("Test Precision", f"{eval_metrics['precision']:.3f}")
+k5.metric("Test Recall", f"{eval_metrics['recall']:.3f}")
+k6.metric("Test F1 Score", f"{eval_metrics['f1']:.3f}")
 
-# Executive KPI Metrics
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("🌡️ Thermal Core", f"{latest_data['Temperature_C']:.2f} °C", "+0.2°C")
-col2.metric("⚡ Bus Voltage", f"{latest_data['Battery_Voltage_V']:.2f} V", "-0.05V")
-col3.metric("🔋 Power Load", f"{latest_data['Power_Consumption_W']:.2f} W", "+1.2W")
-col4.metric("☀️ Array Output", f"{latest_data['Solar_Panel_Output_W']:.2f} W", "0.0W")
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("False Positive Rate (FPR)", f"{eval_metrics['fpr']:.4f}")
+m2.metric("False Positives / True Positives", f"{eval_metrics['fp']} FP / {eval_metrics['tp']} TP")
+m3.metric(
+    "Labelled Sequences Caught",
+    f"{eval_metrics['detected_sequences']} / {eval_metrics['total_sequences']}",
+)
+m4.metric("Mean Detection Delay (Steps)", f"{eval_metrics['mean_detection_delay']}")
 
 st.divider()
 
 # ==========================================
-# 4. INTERACTIVE TELEMETRY VIEW
+# 7. INTERACTIVE TELEMETRY & INTERVAL PLOT
 # ==========================================
-st.markdown(f"### 📡 Interactive Telemetry Analysis: `{selected_sensor}`")
+st.markdown(
+    f"### 📡 Telemetry Channel `{selected_channel}` ({bundle['spacecraft']}) — Model: `{detector_type}`"
+)
 
 fig = go.Figure()
 
-# Corporate Blue Line for Nominal Data
-fig.add_trace(go.Scatter(
-    x=test_df['Timestamp'], y=test_df[selected_sensor],
-    mode='lines', name='Baseline Telemetry',
-    line=dict(color='#0EA5E9', width=2)
-))
-
-# Severe Red Markers for AI Anomalies
-fig.add_trace(go.Scatter(
-    x=anomalies_df['Timestamp'], y=anomalies_df[selected_sensor],
-    mode='markers', name='AI Detection Flag',
-    marker=dict(color='#EF4444', size=8, symbol='circle', line=dict(color='white', width=1)),
-    hovertemplate="<b>Timestamp:</b> %{x}<br>" +
-                  "<b>Reading:</b> %{y:.2f}<br>" +
-                  "<b>Root Cause:</b> " + anomalies_df['Root_Cause_Parameter'] + "<br>" +
-                  "<b>Severity:</b> " + anomalies_df['Severity'] + "<extra></extra>"
-))
-
-# Enterprise Dark Chart Layout
-fig.update_layout(
-    template="plotly_dark",
-    plot_bgcolor='#0F172A',
-    paper_bgcolor='rgba(0,0,0,0)',
-    margin=dict(l=0, r=0, t=30, b=0),
-    xaxis=dict(showgrid=True, gridcolor='#1E293B', title="Mission Elapsed Time (UTC)"),
-    yaxis=dict(showgrid=True, gridcolor='#1E293B', title="Telemetry Value"),
-    hovermode="x unified",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+fig.add_trace(
+    go.Scatter(
+        x=display_df["timestep"],
+        y=display_df["baseline_value"],
+        mode="lines",
+        name="Rolling Robust Baseline",
+        line=dict(color="#64748B", width=1.5, dash="dot"),
+    )
 )
 
-st.plotly_chart(fig, use_container_width=True)
+fig.add_trace(
+    go.Scatter(
+        x=display_df["timestep"],
+        y=display_df[primary_col],
+        mode="lines",
+        name="Observed Telemetry (Scaled/Anonymized)",
+        line=dict(color="#0EA5E9", width=2),
+    )
+)
+
+if not anomalies_df.empty:
+    fig.add_trace(
+        go.Scatter(
+            x=anomalies_df["timestep"],
+            y=anomalies_df[primary_col],
+            mode="markers",
+            name="Predicted Anomaly Flag",
+            marker=dict(color="#EF4444", size=8, symbol="circle", line=dict(color="white", width=1)),
+            hovertemplate=(
+                "<b>Timestep:</b> %{x}<br>"
+                "<b>Scaled Value:</b> %{y:.4f}<br>"
+                "<b>Score:</b> " + anomalies_df["Anomaly_Score"].astype(str) + "<br>"
+                "<b>Severity:</b> " + anomalies_df["Severity"] + "<br>"
+                "<b>Supporting Evidence:</b> " + anomalies_df["Supporting_Evidence"] + "<extra></extra>"
+            ),
+        )
+    )
+
+min_ts, max_ts = display_df["timestep"].min(), display_df["timestep"].max()
+for idx, seq in enumerate(bundle["anomaly_sequences"]):
+    s_start, s_end = int(seq[0]), int(seq[1])
+    if s_end >= min_ts and s_start <= max_ts:
+        fig.add_vrect(
+            x0=max(s_start, min_ts),
+            x1=min(s_end, max_ts),
+            fillcolor="rgba(234, 179, 8, 0.20)",
+            layer="below",
+            line_width=1,
+            line_color="rgba(234, 179, 8, 0.6)",
+            annotation_text=f"Ground Truth #{idx+1}" if idx == 0 else "",
+            annotation_position="top left",
+        )
+
+fig.update_layout(
+    template="plotly_dark",
+    plot_bgcolor="#0F172A",
+    paper_bgcolor="rgba(0,0,0,0)",
+    margin=dict(l=0, r=0, t=30, b=0),
+    xaxis=dict(showgrid=True, gridcolor="#1E293B", title="Anonymized Timestep Index (Held-Out Test Split)"),
+    yaxis=dict(showgrid=True, gridcolor="#1E293B", title="Scaled Telemetry Value (Dimensionless)"),
+    hovermode="x unified",
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+)
+
+st.plotly_chart(fig, width='stretch')
 
 # ==========================================
-# 5. DIAGNOSTIC LOG & ACTION CENTER
+# 8. ROOT-CAUSE HYPOTHESIS & TRIAGE LOG
 # ==========================================
-st.markdown("### 📋 AI Diagnostic Log & Triage")
+st.markdown("### 📋 Root-Cause Triage & Correlated Signal Hypotheses")
+st.caption(
+    "All root-cause attributions below are statistical hypotheses derived from correlated channel/command "
+    "deviations. Human engineering review is mandatory before any spacecraft action."
+)
 
 if filtered_anomalies.empty:
-    st.info("No anomalies match the current operational filters.")
+    st.info("No predicted anomalies match the current severity filters in this window.")
 else:
-    for index, row in filtered_anomalies.tail(5).iterrows():
-        # Corporate color coding for severity
-        if row['Severity'] == "High":
-            badge = "🔴 CRITICAL"
-        elif row['Severity'] == "Medium":
-            badge = "🟠 WARNING"
-        else:
-            badge = "🟡 ADVISORY"
+    for _, row in filtered_anomalies.tail(8).iterrows():
+        badge = (
+            "🔴 HIGH SEVERITY"
+            if row["Severity"] == "High"
+            else ("🟠 MEDIUM SEVERITY" if row["Severity"] == "Medium" else "🟡 LOW SEVERITY")
+        )
+        gt_match = "✅ True Positive (Inside Ground-Truth Interval)" if row["ground_truth"] == 1 else "⚠️ False Positive (Outside Ground-Truth Interval)"
 
-        with st.expander(f"{badge} | Timestamp: {row['Timestamp']} | Fault Domain: {row['Root_Cause_Parameter']}"):
-            st.markdown(f"**AI Confidence Score:** `{row['Anomaly_Score']}`")
-            st.markdown(f"**Diagnostic Interpretation:** {row['Possible_Interpretation']}")
-            st.markdown(f"**Recommended Mitigation:** `{row['System_Recommendation']}`")
+        with st.expander(
+            f"{badge} | Timestep: {int(row['timestep'])} | Channel: {selected_channel} | {gt_match}"
+        ):
+            c1, c2, c3 = st.columns(3)
+            c1.markdown(f"**Observed / Baseline:** `{row[primary_col]:.4f}` / `{row['baseline_value']:.4f}`")
+            c2.markdown(f"**Anomaly Score:** `{row['Anomaly_Score']:.4f}` (Threshold: `{row['Threshold_Used']}`)")
+            c3.markdown(f"**Primary Channel |Z|-Score:** `{row['Primary_Z_Score']}`")
 
-    st.caption("Displaying top 5 most recent fault events. Expand rows for automated mitigation instructions.")
+            st.markdown(f"**Supporting Correlated Evidence:** `{row['Supporting_Evidence']}`")
+            st.markdown(f"**Diagnostic Hypothesis:** {row['Hypothesis']}")
+            st.warning(f"**Operational Gate:** {row['Triage_Action']}")
+
+if st.session_state.stream_active:
+    time.sleep(0.6)
+    st.rerun()
+
+
+
+ 
