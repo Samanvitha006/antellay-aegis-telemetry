@@ -57,7 +57,7 @@ def validate_and_clean_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, list[s
 
 
 def load_channel_data(chan_id: str) -> dict:
-    """Loads a single Telemanom channel from Hugging Face and attaches ground-truth intervals."""
+    """Loads a single Telemanom channel from Hugging Face and attaches ground-truth intervals safely."""
     ds = load_dataset("appleparan/telemanom", name=chan_id)
     train_raw = ds["train"].to_pandas()
     test_raw = ds["test"].to_pandas()
@@ -65,7 +65,7 @@ def load_channel_data(chan_id: str) -> dict:
     train_df, feature_cols = validate_and_clean_dataframe(train_raw)
     test_df, _ = validate_and_clean_dataframe(test_raw)
 
-    # Load metadata & ground-truth intervals
+    # Load metadata & ground-truth intervals safely
     labels_df = load_labels_metadata()
     chan_meta = labels_df[labels_df["chan_id"] == chan_id]
 
@@ -76,9 +76,21 @@ def load_channel_data(chan_id: str) -> dict:
     if not chan_meta.empty:
         row = chan_meta.iloc[0]
         spacecraft = str(row["spacecraft"])
-        anomaly_sequences = ast.literal_eval(row["anomaly_sequences"])
+        
+        # Safely parse anomaly sequences with fallback
+        try:
+            val_seq = row["anomaly_sequences"]
+            anomaly_sequences = ast.literal_eval(str(val_seq)) if pd.notna(val_seq) else []
+        except (ValueError, SyntaxError):
+            anomaly_sequences = []
+
+        # Safely parse anomaly classes with fallback
         if "class" in row and pd.notna(row["class"]):
-            anomaly_classes = ast.literal_eval(row["class"])
+            try:
+                val_cls = row["class"]
+                anomaly_classes = ast.literal_eval(str(val_cls)) if pd.notna(val_cls) else []
+            except (ValueError, SyntaxError):
+                anomaly_classes = []
 
     # Map ground-truth intervals onto the held-out test set
     test_df["ground_truth"] = 0
@@ -109,25 +121,18 @@ def run_detectors(
     threshold_pct: float = 1.0,
     rolling_window: int = 30,
 ) -> pd.DataFrame:
-    """
-    Runs either the Configurable Rolling Robust Baseline or the Isolation Forest detector.
-    Strictly fits all scalers and thresholds on train_df to prevent test data leakage.
-    """
     test_out = test_df.copy()
     primary_col = "value" if "value" in feature_cols else feature_cols[0]
 
-    # Fit scaler strictly on training data
     scaler = StandardScaler()
     X_train = scaler.fit_transform(train_df[feature_cols])
     X_test = scaler.transform(test_out[feature_cols])
 
-    # Rolling baseline reference for plotting on the dashboard
     test_out["baseline_value"] = (
         test_out[primary_col].rolling(window=rolling_window, min_periods=1).median()
     )
 
     if detector_type == "Rolling Robust Baseline (Statistical)":
-        # Compute rolling residual on training set to establish a non-leaked threshold
         train_rolling_med = train_df[primary_col].rolling(window=rolling_window, min_periods=1).median()
         train_resid = np.abs(train_df[primary_col] - train_rolling_med)
         mad = np.median(train_resid) + 1e-6
@@ -143,7 +148,6 @@ def run_detectors(
         test_out["Threshold_Used"] = round(float(dynamic_threshold), 4)
 
     else:
-        # Isolation Forest ML Baseline (Split train into 85% fit / 15% validation for threshold)
         split_idx = int(len(X_train) * 0.85)
         X_fit, X_val = X_train[:split_idx], X_train[split_idx:]
 
@@ -158,12 +162,10 @@ def run_detectors(
         dynamic_threshold = np.percentile(val_raw_scores, threshold_pct)
 
         test_raw_scores = model.decision_function(X_test)
-        # Invert scores so higher positive values = higher anomaly severity
         test_out["Anomaly_Score"] = np.round(-test_raw_scores, 4)
         test_out["Predicted_Anomaly"] = (test_raw_scores < dynamic_threshold).astype(int)
         test_out["Threshold_Used"] = round(float(-dynamic_threshold), 4)
 
-    # Severity Stratification (using training-calibrated percentiles)
     p98 = np.percentile(test_out["Anomaly_Score"], 98)
     p90 = np.percentile(test_out["Anomaly_Score"], 90)
 
@@ -178,7 +180,6 @@ def run_detectors(
 
     test_out["Severity"] = test_out.apply(assign_severity, axis=1)
 
-    # Root-Cause Hypothesis & Supporting Evidence via Training Z-Scores
     train_means = train_df[feature_cols].mean()
     train_stds = train_df[feature_cols].std().replace(0, 1e-6)
     z_matrix = ((test_out[feature_cols] - train_means) / train_stds).abs()
@@ -186,7 +187,6 @@ def run_detectors(
     test_out["Primary_Z_Score"] = np.round(z_matrix[primary_col], 2)
     test_out["Top_Correlated_Feature"] = z_matrix.idxmax(axis=1)
 
-    # Identify top active command/correlated signals where |Z| > 2.0
     def build_hypothesis(idx):
         if test_out.loc[idx, "Predicted_Anomaly"] == 0:
             return "Nominal baseline behavior.", "None", "No operational action required."
@@ -215,10 +215,6 @@ def run_detectors(
 
 
 def evaluate_predictions(test_df: pd.DataFrame, anomaly_sequences: list) -> dict:
-    """
-    Computes pointwise Precision, Recall, F1, False-Positive Rate (FPR),
-    and sequence-level Detection Delay (Step F).
-    """
     y_true = test_df["ground_truth"].values
     y_pred = test_df["Predicted_Anomaly"].values
 
@@ -230,7 +226,6 @@ def evaluate_predictions(test_df: pd.DataFrame, anomaly_sequences: list) -> dict
     tn, fp, fn, tp = cm.ravel()
     fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
 
-    # Calculate sequence detection and detection delay (in timesteps)
     delays = []
     detected_sequences = 0
     for seq in anomaly_sequences:
@@ -257,3 +252,8 @@ def evaluate_predictions(test_df: pd.DataFrame, anomaly_sequences: list) -> dict
         "detected_sequences": detected_sequences,
         "mean_detection_delay": round(mean_delay, 1) if mean_delay is not None else "N/A",
     }
+
+   
+
+
+  
