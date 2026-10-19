@@ -208,7 +208,6 @@ col3.metric("Anomaly Score", f"{latest_row['Anomaly_Score']:.4f}")
 
 st.markdown("#### 🎯 Model Evaluation Scorecard (Held-Out Test Split)")
 
-# Use clean columns with custom formatting for the performance scorecard
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.metric("Precision", f"{eval_metrics['precision']:.3f}")
 m2.metric("Recall", f"{eval_metrics['recall']:.3f}")
@@ -216,6 +215,14 @@ m3.metric("F1 Score", f"{eval_metrics['f1']:.3f}")
 m4.metric("FPR", f"{eval_metrics['fpr']:.3f}")
 m5.metric("Sequences Caught", f"{eval_metrics['detected_sequences']}/{eval_metrics['total_sequences']}")
 m6.metric("Detection Delay", f"{eval_metrics['mean_detection_delay']}")
+
+# --- NEW: Explicit Confusion Matrix Breakdown Row ---
+st.markdown("#### 📐 Confusion Matrix Counts (Point-wise Test Split)")
+cm1, cm2, cm3, cm4 = st.columns(4)
+cm1.metric("True Positives (TP)", f"{eval_metrics['tp']}")
+cm2.metric("False Positives (FP)", f"{eval_metrics['fp']}")
+cm3.metric("True Negatives (TN)", f"{eval_metrics['tn']}")
+cm4.metric("False Negatives (FN)", f"{eval_metrics['fn']}")
 
 st.divider()
 
