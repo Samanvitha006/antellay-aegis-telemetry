@@ -198,7 +198,7 @@ st.markdown(
 
 
 # ==========================================
-# 6. CLEAN EXECUTIVE METRICS & EVALUATION
+# 6. EXECUTIVE METRICS & AESTHETIC CONFUSION MATRIX
 # ==========================================
 st.markdown("#### 📊 Live Channel Telemetry State")
 col1, col2, col3 = st.columns(3)
@@ -207,7 +207,6 @@ col2.metric("Rolling Baseline", f"{latest_row['baseline_value']:.4f}")
 col3.metric("Anomaly Score", f"{latest_row['Anomaly_Score']:.4f}")
 
 st.markdown("#### 🎯 Model Evaluation Scorecard (Held-Out Test Split)")
-
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.metric("Precision", f"{eval_metrics['precision']:.3f}")
 m2.metric("Recall", f"{eval_metrics['recall']:.3f}")
@@ -216,14 +215,50 @@ m4.metric("FPR", f"{eval_metrics['fpr']:.3f}")
 m5.metric("Sequences Caught", f"{eval_metrics['detected_sequences']}/{eval_metrics['total_sequences']}")
 m6.metric("Detection Delay", f"{eval_metrics['mean_detection_delay']}")
 
-# --- NEW: Explicit Confusion Matrix Breakdown Row ---
-st.markdown("#### 📐 Confusion Matrix Counts (Point-wise Test Split)")
-cm1, cm2, cm3, cm4 = st.columns(4)
-cm1.metric("True Positives (TP)", f"{eval_metrics['tp']}")
-cm2.metric("False Positives (FP)", f"{eval_metrics['fp']}")
-cm3.metric("True Negatives (TN)", f"{eval_metrics['tn']}")
-cm4.metric("False Negatives (FN)", f"{eval_metrics['fn']}")
+# --- AESTHETIC 2x2 CONFUSION MATRIX CARD ---
+st.markdown("#### 📐 Confusion Matrix Matrix & Breakdown")
 
+cm_html = f"""
+<div style="background-color: #111827; border: 1px solid #1E293B; padding: 20px; border-radius: 8px; font-family: 'Inter', sans-serif; margin-bottom: 20px;">
+    <div style="text-align: center; color: #94A3B8; font-size: 0.85em; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 15px;">
+        <b>Predicted Class vs Ground Truth (Point-wise Evaluation)</b>
+    </div>
+    <table style="width: 100%; text-align: center; border-collapse: collapse; color: #E2E8F0;">
+        <thead>
+            <tr style="border-bottom: 1px solid #1E293B;">
+                <th style="padding: 10px; color: #94A3B8; text-align: left; width: 30%;">\\</th>
+                <th style="padding: 10px; color: #38BDF8; width: 35%;">Predicted Nominal (0)</th>
+                <th style="padding: 10px; color: #EF4444; width: 35%;">Predicted Anomaly (1)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr style="border-bottom: 1px solid #1E293B;">
+                <td style="padding: 14px; font-weight: 600; color: #38BDF8; text-align: left;">Actual Nominal (0)</td>
+                <td style="padding: 14px; background-color: rgba(14, 165, 233, 0.08); border-radius: 6px;">
+                    <span style="font-size: 1.3em; font-weight: 700; color: #38BDF8;">{eval_metrics['tn']:,}</span><br>
+                    <span style="font-size: 0.75em; color: #94A3B8; font-weight: 500;">True Negative (TN)</span>
+                </td>
+                <td style="padding: 14px;">
+                    <span style="font-size: 1.3em; font-weight: 700; color: #F59E0B;">{eval_metrics['fp']:,}</span><br>
+                    <span style="font-size: 0.75em; color: #94A3B8; font-weight: 500;">False Positive (FP)</span>
+                </td>
+            </tr>
+            <tr>
+                <td style="padding: 14px; font-weight: 600; color: #EF4444; text-align: left;">Actual Anomaly (1)</td>
+                <td style="padding: 14px;">
+                    <span style="font-size: 1.3em; font-weight: 700; color: #F59E0B;">{eval_metrics['fn']:,}</span><br>
+                    <span style="font-size: 0.75em; color: #94A3B8; font-weight: 500;">False Negative (FN)</span>
+                </td>
+                <td style="padding: 14px; background-color: rgba(34, 197, 94, 0.10); border-radius: 6px;">
+                    <span style="font-size: 1.3em; font-weight: 700; color: #22C55E;">{eval_metrics['tp']:,}</span><br>
+                    <span style="font-size: 0.75em; color: #94A3B8; font-weight: 500;">True Positive (TP)</span>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+"""
+st.markdown(cm_html, unsafe_allow_html=True)
 st.divider()
 
 # ==========================================
