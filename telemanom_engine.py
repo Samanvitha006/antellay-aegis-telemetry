@@ -72,7 +72,7 @@ def run_detectors(
     test_df: pd.DataFrame,
     feature_cols: list[str],
     detector_type: str = "Isolation Forest (Unsupervised ML)",
-    threshold_pct: float = 3.0,  # Increased sensitivity to improve Recall
+    threshold_pct: float = 3.0,
     rolling_window: int = 30,
 ) -> pd.DataFrame:
     test_out = test_df.copy()
@@ -87,7 +87,6 @@ def run_detectors(
     )
 
     if detector_type == "Rolling Robust Baseline (Statistical)":
-        # Compute MAD residuals on training split only (no data leakage)
         train_rolling_med = train_df[primary_col].rolling(window=rolling_window, min_periods=1).median()
         train_resid = np.abs(train_df[primary_col] - train_rolling_med)
         mad = np.median(train_resid) + 1e-6
@@ -103,11 +102,9 @@ def run_detectors(
         test_out["Threshold_Used"] = round(float(dynamic_threshold), 4)
 
     else:
-        # Leak-free threshold tuning using an 85/15 train/validation split
         split_idx = int(len(X_train) * 0.85)
         X_fit, X_val = X_train[:split_idx], X_train[split_idx:]
 
-        # Increased contamination to capture broader sequence anomalies
         contamination_rate = max(0.01, min(0.25, threshold_pct / 100.0))
         model = IsolationForest(
             n_estimators=200,
@@ -124,9 +121,9 @@ def run_detectors(
         test_out["Predicted_Anomaly"] = (test_raw_scores < dynamic_threshold).astype(int)
         test_out["Threshold_Used"] = round(float(-dynamic_threshold), 4)
 
-    # Optional smoothing: bridge single-timestep gaps within anomaly clusters to boost sequence recall
+    # Sequence smoothing to bridge fragmented temporal anomaly flags
     preds = test_out["Predicted_Anomaly"].values
-    smoothed_preds = pd.Series(preds).rolling(window=5, min_periods=1, center=True).max().fillna(0).astype(int)
+    smoothed_preds = pd.Series(preds).rolling(window=7, min_periods=1, center=True).max().fillna(0).astype(int)
     test_out["Predicted_Anomaly"] = smoothed_preds
 
     p98 = np.percentile(test_out["Anomaly_Score"], 98)
