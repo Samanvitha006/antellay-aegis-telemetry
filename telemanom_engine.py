@@ -29,7 +29,7 @@ def validate_and_clean_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, list[s
     return df, feature_cols
 
 def load_channel_data(chan_id: str) -> dict:
-    ds = load_dataset("appleparan/telemanom", name=chan_id)[cite: 4]
+    ds = load_dataset("appleparan/telemanom", name=chan_id)
     train_raw = ds["train"].to_pandas()
     test_raw = ds["test"].to_pandas()
 
